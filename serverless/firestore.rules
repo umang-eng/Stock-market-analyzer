@@ -1,0 +1,114 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default rule: Deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Public collections - Read only for all users (authenticated and unauthenticated)
+    // Confirmed final: No client-side writes are ever allowed.
+    // Articles collection (managed by Phase 1 serverless function)
+    match /articles/{articleId} {
+      allow read: if true;  // Public read access
+      allow write: if false;  // No client writes - managed by serverless function
+    }
+    
+    // Market data cache (managed by Phase 2 serverless function)
+    match /market_data_cache/{cacheId} {
+      allow read: if true;  // Public read access
+      allow write: if false;  // No client writes - managed by serverless function
+    }
+    
+    // Market status (managed by Phase 4 serverless function)
+    match /market_status/{statusId} {
+      allow read: if true;  // Public read access
+      allow write: if false;  // No client writes - managed by serverless function
+    }
+    
+    // Sentiment history (managed by Phase 4 serverless function)
+    match /sentiment_history/{historyId} {
+      allow read: if true;  // Public read access
+      allow write: if false;  // No client writes - managed by serverless function
+    }
+    
+    // User-specific collections - Secure access control
+    
+    // Users collection with nested watchlist
+    match /users/{userId} {
+      // User can only access their own user document
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Watchlist subcollection
+      match /watchlist/{tickerDocId} {
+        // Read allowed for owner
+        allow read: if request.auth != null && request.auth.uid == userId;
+        // Create with strict validation (ticker only, <=10 chars)
+        allow create: if request.auth != null && request.auth.uid == userId &&
+          resource.data.keys().hasOnly(['ticker']) &&
+          resource.data.ticker is string &&
+          resource.data.ticker.size() >= 1 && resource.data.ticker.size() <= 10;
+        // Update must keep same constraints and not add fields
+        allow update: if request.auth != null && request.auth.uid == userId &&
+          resource.data.keys().hasOnly(['ticker']) &&
+          resource.data.ticker is string &&
+          resource.data.ticker.size() >= 1 && resource.data.ticker.size() <= 10;
+        // Delete allowed for owner
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // User preferences subcollection (for future use)
+      match /preferences/{preferenceId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // User activity subcollection (for future use)
+      match /activity/{activityId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Feedback collection - Create-only with validation and rate limiting
+    match /feedback/{feedbackId} {
+      // Enforce doc ID pattern for per-minute rate limiting: `${uid}_${YYYYMMDDHHMM}`
+      function _minuteKey(ts) {
+        return ts.year() + pad(ts.month(), 2) + pad(ts.day(), 2) + pad(ts.hours(), 2) + pad(ts.minutes(), 2);
+      }
+      function pad(n, l) { return ("0000" + n).slice(l * -1); }
+      allow create: if request.auth != null &&
+        feedbackId == (request.auth.uid + '_' + _minuteKey(request.time)) &&
+        resource.data.keys().hasOnly(['message','category','submittedAt']) &&
+        resource.data.message is string && resource.data.message.size() >= 10 && resource.data.message.size() <= 2000 &&
+        resource.data.category is string && resource.data.category in ['bug','feature','general','improvement'] &&
+        resource.data.submittedAt is timestamp &&
+        !exists(/databases/$(database)/documents/feedback/$(feedbackId));
+
+      // No reads/updates/deletes to protect privacy
+      allow read, update, delete: if false;
+    }
+    
+    // Admin collections (for future administrative functions)
+    match /admin/{adminDoc} {
+      // Only allow access if user has custom admin claim
+      allow read, write: if request.auth != null && 
+        request.auth.token.admin == true;
+    }
+    
+    // System collections (for internal use)
+    match /system/{systemDoc} {
+      // No client access - managed by serverless functions only
+      allow read, write: if false;
+    }
+    
+    // Analytics collection (for future analytics)
+    match /analytics/{analyticsDoc} {
+      // Only authenticated users can create analytics events
+      allow create: if request.auth != null;
+      
+      // No read access to protect user privacy
+      allow read, update, delete: if false;
+    }
+  }
+}
