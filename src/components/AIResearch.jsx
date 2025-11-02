@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import api from '../services/api'
+import apiService from '../services/api'
 
 const AIResearch = () => {
   const [question, setQuestion] = useState('What is the latest market view on RELIANCE and its near-term catalysts?')
@@ -13,7 +13,7 @@ const AIResearch = () => {
     setLoading(true)
     setResult(null)
     try {
-      const data = await api.researchAI(question)
+      const data = await apiService.researchAI(question)
       if (!data || data.error) {
         setError(data?.error || 'AI research failed')
       } else {
